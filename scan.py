@@ -260,10 +260,6 @@ def lambda_handler(event, context):
         print("Scanning file (name caused exception)")
 
     scan_result, scan_signature = clamav.scan_file(file_path)
-    print(
-        "Scan of s3://%s resulted in %s\n"
-        % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result)
-    )
     try:
         print(
             "Scan of s3://%s resulted in %s\n"
