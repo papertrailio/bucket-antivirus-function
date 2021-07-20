@@ -16,6 +16,7 @@
 import copy
 import json
 import os
+import signal
 from urllib.parse import unquote_plus
 from distutils.util import strtobool
 
@@ -41,6 +42,8 @@ from common import SNS_ENDPOINT
 from common import S3_ENDPOINT
 from common import create_dir
 from common import get_timestamp
+
+clamd_pid = None
 
 
 def event_object(event, event_source="s3"):
@@ -200,7 +203,24 @@ def sns_scan_results(
     )
 
 
+def kill_process_by_pid(pid):
+    # Check if process is running on PID
+    try:
+        os.kill(clamd_pid, 0)
+    except OSError:
+        return
+
+    print("Killing the process by PID %s" % clamd_pid)
+
+    try:
+        os.kill(clamd_pid, signal.SIGTERM)
+    except OSError:
+        os.kill(clamd_pid, signal.SIGKILL)
+
+
 def lambda_handler(event, context):
+    global clamd_pid
+
     s3 = boto3.resource("s3", endpoint_url=S3_ENDPOINT)
     s3_client = boto3.client("s3", endpoint_url=S3_ENDPOINT)
     sns_client = boto3.client("sns", endpoint_url=SNS_ENDPOINT)
@@ -208,6 +228,13 @@ def lambda_handler(event, context):
     # Get some environment variables
     ENV = os.getenv("ENV", "")
     EVENT_SOURCE = os.getenv("EVENT_SOURCE", "S3")
+
+    if not clamav.is_clamd_running():
+        if clamd_pid is not None:
+            kill_process_by_pid(clamd_pid)
+
+        clamd_pid = clamav.start_clamd_daemon()
+        print("Clamd PID: %s" % clamd_pid)
 
     start_time = get_timestamp()
     print("Script starting at %s\n" % (start_time))
@@ -225,21 +252,25 @@ def lambda_handler(event, context):
     create_dir(os.path.dirname(file_path))
     s3_object.download_file(file_path)
 
-    to_download = clamav.update_defs_from_s3(
-        s3_client, AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX
-    )
+    try:
+        print(
+            "Scanning s3://%s ...\n" % (os.path.join(s3_object.bucket_name, s3_object.key))
+        )
+    except Exception:
+        print("Scanning file (name caused exception)")
 
-    for download in to_download.values():
-        s3_path = download["s3_path"]
-        local_path = download["local_path"]
-        print("Downloading definition file %s from s3://%s" % (local_path, s3_path))
-        s3.Bucket(AV_DEFINITION_S3_BUCKET).download_file(s3_path, local_path)
-        print("Downloading definition file %s complete!" % (local_path))
     scan_result, scan_signature = clamav.scan_file(file_path)
     print(
         "Scan of s3://%s resulted in %s\n"
         % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result)
     )
+    try:
+        print(
+            "Scan of s3://%s resulted in %s\n"
+            % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result)
+        )
+    except Exception:
+        print("Scaned file (name caused exception)")
 
     result_time = get_timestamp()
     # Set the properties on the object with the scan results

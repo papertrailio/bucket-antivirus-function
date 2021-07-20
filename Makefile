@@ -29,8 +29,8 @@ clean:  ## Clean build artifacts
 	rm -rf build/
 	rm -rf tmp/
 	rm -f .coverage
-	find ./ -type d -name '__pycache__' -delete
 	find ./ -type f -name '*.pyc' -delete
+	find ./ -type d -name '__pycache__' -delete
 
 .PHONY: archive
 archive: clean  ## Create the archive for AWS lambda

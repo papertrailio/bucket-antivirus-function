@@ -21,20 +21,49 @@ RUN rm -rf /root/.cache/pip
 
 # Download libraries we need to run in lambda
 WORKDIR /tmp
-RUN yumdownloader -x \*i686 --archlist=x86_64 clamav clamav-lib clamav-update json-c pcre2 libprelude gnutls libtasn1 lib64nettle nettle
+RUN yumdownloader -x \*i686 --archlist=x86_64 \
+  clamav \
+  clamav-lib \
+  clamav-scanner-systemd \
+  clamav-update \
+  elfutils-libs \
+  json-c \
+  lz4 \
+  pcre2 \
+  libprelude \
+  gnutls \
+  libtasn1 \
+  nettle \
+  lib64nettle \
+  systemd-libs
 RUN rpm2cpio clamav-0*.rpm | cpio -idmv
 RUN rpm2cpio clamav-lib*.rpm | cpio -idmv
 RUN rpm2cpio clamav-update*.rpm | cpio -idmv
+RUN rpm2cpio clamd-0*.rpm | cpio -idmv
+RUN rpm2cpio elfutils-libs*.rpm | cpio -idmv
 RUN rpm2cpio json-c*.rpm | cpio -idmv
+RUN rpm2cpio lz4*.rpm | cpio -idmv
 RUN rpm2cpio pcre*.rpm | cpio -idmv
+RUN rpm2cpio libprelude*.rpm | cpio -idmv
 RUN rpm2cpio gnutls* | cpio -idmv
+RUN rpm2cpio libtasn1* | cpio -idmv
 RUN rpm2cpio nettle* | cpio -idmv
 RUN rpm2cpio lib* | cpio -idmv
 RUN rpm2cpio *.rpm | cpio -idmv
-RUN rpm2cpio libtasn1* | cpio -idmv
+RUN rpm2cpio systemd-libs*.rpm | cpio -idmv
 
 # Copy over the binaries and libraries
-RUN cp /tmp/usr/bin/clamscan /tmp/usr/bin/freshclam /tmp/usr/lib64/* /opt/app/bin/
+RUN cp -r /tmp/usr/bin/clamdscan \
+  /tmp/usr/sbin/clamd \
+  /tmp/usr/bin/freshclam \
+  /tmp/usr/lib64/* \
+  /opt/app/bin/
+
+RUN echo "DatabaseDirectory /tmp/clamav_defs" > /opt/app/bin/scan.conf
+RUN echo "PidFile /tmp/clamd.pid" >> /opt/app/bin/scan.conf
+RUN echo "LogFile /tmp/clamd.log" >> /opt/app/bin/scan.conf
+RUN echo "LocalSocket /tmp/clamd.sock" >> /opt/app/bin/scan.conf
+RUN echo "FixStaleSocket yes" >> /opt/app/bin/scan.conf
 
 # Fix the freshclam.conf settings
 RUN echo "DatabaseMirror database.clamav.net" > /opt/app/bin/freshclam.conf
