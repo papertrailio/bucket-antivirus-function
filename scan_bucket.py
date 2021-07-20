@@ -27,7 +27,7 @@ from common import S3_ENDPOINT
 
 
 # Scan all objects in an S3 bucket that have not been previously scanned
-def scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name, force_scan):
+def scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name, start_after_key, force_scan):
     s3_list_objects_result = {"IsTruncated": True}
     while s3_list_objects_result["IsTruncated"]:
         s3_list_objects_config = {"Bucket": s3_bucket_name}
@@ -40,14 +40,15 @@ def scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name,
             break
         for key in s3_list_objects_result["Contents"]:
             key_name = key["Key"]
-            # Don't include objects that have been scanned
-            if not object_previously_scanned(s3_client, s3_bucket_name, key_name, force_scan):
-                scan_object(lambda_client, lambda_function_name, s3_bucket_name, key_name)
-            else:
-                try:
-                    print("Skipping previously scanned object: {}".format(key_name).encode('utf-8'))
-                except Exception:
-                    print("Skipping previously scanned file name exception")
+            if (start_after_key and key_name > start_after_key) or (not start_after_key):
+                # Don't include objects that have been scanned
+                if not object_previously_scanned(s3_client, s3_bucket_name, key_name, force_scan):
+                    scan_object(lambda_client, lambda_function_name, s3_bucket_name, key_name)
+                else:
+                    try:
+                        print("Skipping previously scanned object: {}".format(key_name).encode('utf-8'))
+                    except Exception:
+                        print("Skipping previously scanned file name exception")
 
 
 # Determine if an object has been previously scanned for viruses
@@ -105,7 +106,7 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-def main(lambda_function_name, s3_bucket_name, force_scan):
+def main(lambda_function_name, s3_bucket_name, start_after_key, force_scan):
     # Verify the lambda exists
     lambda_client = boto3.client("lambda", endpoint_url=LAMBDA_ENDPOINT)
     try:
@@ -125,7 +126,7 @@ def main(lambda_function_name, s3_bucket_name, force_scan):
         sys.exit(1)
 
     # Scan the objects in the bucket
-    scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name, force_scan)
+    scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name, start_after_key, force_scan)
 
 
 if __name__ == "__main__":
@@ -138,7 +139,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--s3-bucket-name", required=True, help="The name of the S3 bucket to scan"
     )
+    parser.add_argument(
+        "--start-after-key", required=False, help="The key of the S3 Object to start scanning from"
+    )
     parser.add_argument("--force-scan", type=str2bool, nargs='?', const=True, default=False, help="Skip checking for previous scan results, which speeds things up")
     args = parser.parse_args()
 
-    main(args.lambda_function_name, args.s3_bucket_name, args.force_scan)
+    main(args.lambda_function_name, args.s3_bucket_name, args.start_after_key, args.force_scan)
