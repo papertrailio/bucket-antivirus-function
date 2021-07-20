@@ -26,11 +26,8 @@ from common import AV_TIMESTAMP_METADATA
 from common import S3_ENDPOINT
 
 
-# Get all objects in an S3 bucket that have not been previously scanned
-def get_objects(s3_client, s3_bucket_name):
-
-    s3_object_list = []
-
+# Scan all objects in an S3 bucket that have not been previously scanned
+def scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name, force_scan):
     s3_list_objects_result = {"IsTruncated": True}
     while s3_list_objects_result["IsTruncated"]:
         s3_list_objects_config = {"Bucket": s3_bucket_name}
@@ -38,19 +35,26 @@ def get_objects(s3_client, s3_bucket_name):
         if continuation_token:
             s3_list_objects_config["ContinuationToken"] = continuation_token
         s3_list_objects_result = s3_client.list_objects_v2(**s3_list_objects_config)
+        print("Got pagination results")
         if "Contents" not in s3_list_objects_result:
             break
         for key in s3_list_objects_result["Contents"]:
             key_name = key["Key"]
             # Don't include objects that have been scanned
-            if not object_previously_scanned(s3_client, s3_bucket_name, key_name):
-                s3_object_list.append(key_name)
-
-    return s3_object_list
+            if not object_previously_scanned(s3_client, s3_bucket_name, key_name, force_scan):
+                scan_object(lambda_client, lambda_function_name, s3_bucket_name, key_name)
+            else:
+                try:
+                    print("Skipping previously scanned object: {}".format(key_name).encode('utf-8'))
+                except Exception:
+                    print("Skipping previously scanned file name exception")
 
 
 # Determine if an object has been previously scanned for viruses
-def object_previously_scanned(s3_client, s3_bucket_name, key_name):
+def object_previously_scanned(s3_client, s3_bucket_name, key_name, force_scan):
+    if force_scan:
+        return False
+
     s3_object_tags = s3_client.get_object_tagging(Bucket=s3_bucket_name, Key=key_name)
     if "TagSet" not in s3_object_tags:
         return False
@@ -64,7 +68,11 @@ def object_previously_scanned(s3_client, s3_bucket_name, key_name):
 # Skip any objects that have already been scanned
 def scan_object(lambda_client, lambda_function_name, s3_bucket_name, key_name):
 
-    print("Scanning: {}/{}".format(s3_bucket_name, key_name))
+    try:
+        print("Scanning: {}/{}".format(s3_bucket_name, key_name).encode('utf-8'))
+    except Exception:
+        print("Scanning: file name exception")
+
     s3_event = format_s3_event(s3_bucket_name, key_name)
     lambda_invoke_result = lambda_client.invoke(
         FunctionName=lambda_function_name,
@@ -72,7 +80,7 @@ def scan_object(lambda_client, lambda_function_name, s3_bucket_name, key_name):
         Payload=json.dumps(s3_event),
     )
     if lambda_invoke_result["ResponseMetadata"]["HTTPStatusCode"] != 202:
-        print("Error invoking lambda: {}".format(lambda_invoke_result))
+        print("Error invoking lambda: {}".format(lambda_invoke_result).encode('utf-8'))
 
 
 # Format an S3 Event to use when invoking the lambda function
@@ -86,29 +94,38 @@ def format_s3_event(s3_bucket_name, key_name):
     return s3_event
 
 
-def main(lambda_function_name, s3_bucket_name, limit):
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def main(lambda_function_name, s3_bucket_name, force_scan):
     # Verify the lambda exists
     lambda_client = boto3.client("lambda", endpoint_url=LAMBDA_ENDPOINT)
     try:
         lambda_client.get_function(FunctionName=lambda_function_name)
+        print("Lambda function {} exists".format(lambda_function_name).encode('utf-8'))
     except Exception:
-        print("Lambda Function '{}' does not exist".format(lambda_function_name))
+        print("Lambda Function '{}' does not exist".format(lambda_function_name).encode('utf-8'))
         sys.exit(1)
 
     # Verify the S3 bucket exists
     s3_client = boto3.client("s3", endpoint_url=S3_ENDPOINT)
     try:
         s3_client.head_bucket(Bucket=s3_bucket_name)
+        print("S3 bucket {} exists".format(s3_bucket_name).encode('utf-8'))
     except Exception:
-        print("S3 Bucket '{}' does not exist".format(s3_bucket_name))
+        print("S3 Bucket '{}' does not exist".format(s3_bucket_name).encode('utf-8'))
         sys.exit(1)
 
     # Scan the objects in the bucket
-    s3_object_list = get_objects(s3_client, s3_bucket_name)
-    if limit:
-        s3_object_list = s3_object_list[: min(limit, len(s3_object_list))]
-    for key_name in s3_object_list:
-        scan_object(lambda_client, lambda_function_name, s3_bucket_name, key_name)
+    scan_objects(s3_client, s3_bucket_name, lambda_client, lambda_function_name, force_scan)
 
 
 if __name__ == "__main__":
@@ -121,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--s3-bucket-name", required=True, help="The name of the S3 bucket to scan"
     )
-    parser.add_argument("--limit", type=int, help="The number of records to limit to")
+    parser.add_argument("--force-scan", type=str2bool, nargs='?', const=True, default=False, help="Skip checking for previous scan results, which speeds things up")
     args = parser.parse_args()
 
-    main(args.lambda_function_name, args.s3_bucket_name, args.limit)
+    main(args.lambda_function_name, args.s3_bucket_name, args.force_scan)
