@@ -170,6 +170,12 @@ pip install boto3
 scan_bucket.py --lambda-function-name=<lambda_function_name> --s3-bucket-name=<s3-bucket-to-scan>
 ```
 
+Additional params
+
+`--force-scan` - Force the scan to run regardless of whether the object has been scanned before.
+
+`--start-after-key` - Scan only objects that have a key greater than the one provided.
+
 This tool will scan all objects that have not been previously scanned in the bucket and invoke the lambda function
 asynchronously. As such you'll have to go to your cloudwatch logs to see the scan results or failures. Additionally,
 the script uses the same environment variables you'd use in your lambda so you can configure them similarly.
